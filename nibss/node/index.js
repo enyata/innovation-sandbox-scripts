@@ -1,142 +1,126 @@
 const http = require("http");
 const crypto = require("crypto");
 
-var username = "Your organization code";
-//Converting organization code to base 64
-var organisation_code = Buffer.from(username).toString("base64");
-var sandbox_key = "Your sandbox key";
+// Replace with actual credentials
+const sandboxKey = "";
+const username = ""
 
-//Data gotten from Reset() headers
-let aes_key;
-let password;
-let ivkey;
+// change hostname to match Interface URL on innovation sandbox dashboard
+const hostname = "";
 
-//Reset Sandbox Credentials
-function Reset() {
-  //setting request headers
-  var reset_options = {
-    
-    //change hostname to match Interface URL on innovation sandbox dashboard
-    hostname: "",
+// Converting organization code to base 64
+const organisationCode = Buffer.from(username).toString("base64");
+const crypt = (aesKey, ivKey) => ({
+  // Encrypt BVN
+  encrypt: (plainText) => {
+    const cipher = crypto.createCipheriv("aes-128-cbc", Buffer.from(aesKey), ivKey);
+    let encrypted = cipher.update(plainText);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    return encrypted.toString("hex");
+  },
+  // Decrypt Response
+  decrypt: (text) => {
+    const textParts = text.split(":");
+    const encryptedText = Buffer.from(textParts.join(":"), "hex");
+    const decipher = crypto.createDecipheriv("aes-128-cbc", Buffer.from(aesKey), ivKey);
+    let decrypted = decipher.update(encryptedText);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return decrypted.toString();
+  },
+});
+
+// Reset Sandbox Credentials
+async function Reset() {
+  let data = "";
+  const options = {
+    hostname,
     path: "/nibss/bvnr/Reset",
-    port: 80,
+    method: "POST",
+    // setting request headers
     headers: {
-      "Sandbox-Key": sandbox_key,
-      OrganisationCode: organisation_code
+      "Sandbox-Key": sandboxKey,
+      OrganisationCode: organisationCode,
     },
-    method: "POST"
   };
 
-  var data = "";
+  return new Promise((resolve, reject) => {
+    const request = http.request(options, (response) => {
+      response.on("error", error => reject(error));
 
-  callback = function(resp) {
-    resp.on("data", chunk => {
-      data += chunk;
+      response.on('data', (chunk) => {
+        data += chunk;
+      });
+
+      response.on("end", () => resolve({
+        aesKey: response.headers.aes_key,
+        ivKey: response.headers.ivkey,
+        password: response.headers.password,
+      }));
     });
 
-    resp.on("end", () => {
-      console.log(resp.headers);
-      aes_key = resp.headers.aes_key;
-      password = resp.headers.password;
-      ivkey = resp.headers.ivkey;
-    });
-
-    resp.on("error", err => {
-      console.log("Error: " + err.message);
-    });
-  };
-  const req = http.request(reset_options, callback).end();
+    request.on("error", (error) => reject(error));
+    request.end();
+  });
 }
 
-Reset();
+// Verify BVN
+async function BVN() {
+  try {
+    // Data gotten from Reset() headers
+    const { aesKey, ivKey, password } = await Reset();
+    const cr = crypt(aesKey, ivKey);
 
-//Encrypt BVN
-const encrypt = text => {
-  let cipher = crypto.createCipheriv(
-    "aes-128-cbc",
-    Buffer.from(aes_key),
-    ivkey
-  );
-  let encrypted = cipher.update(text);
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
-  return encrypted.toString("hex");
-};
+    // Signing signatureheader(username, currentdate and password) with SHA256
+    const today = new Date().toJSON().slice(0, 10).replace(/-/g, "");
+    const signatureHeader = crypto.createHash("sha256").update(`${username}${today}${password}`).digest("hex");
+    const authorizationHeader = Buffer.from(`${username}:${password}`).toString("base64");
+    const signatureMethodHeader = "SHA256";
+    const payload = `{"BVN": "12345678901"}`;
+    const encrypted = cr.encrypt(payload);
 
-//Decrypt Response
-const decrypt = text => {
-  let textParts = text.split(":");
-  let encryptedText = Buffer.from(textParts.join(":"), "hex");
-  let decipher = crypto.createDecipheriv(
-    "aes-128-cbc",
-    Buffer.from(aes_key),
-    ivkey
-  );
-  let decrypted = decipher.update(encryptedText);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  return decrypted.toString();
-};
+    console.log("SENDING PAYLOAD")
+    console.log(payload)
 
-const date = new Date()
-  .toJSON()
-  .slice(0, 10)
-  .replace(/-/g, "");
+    const options = {
+      hostname,
+      path: "/nibss/bvnr/VerifySingleBVN",
+      method: "POST",
+      headers: {
+        "Sandbox-Key": sandboxKey,
+        OrganisationCode: organisationCode,
+        Authorization: authorizationHeader,
+        SIGNATURE: signatureHeader,
+        SIGNATURE_METH: signatureMethodHeader,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    };
 
-//Signing signatureheader(username, currentdate and password) with SHA256
-const signatureHeader = crypto
-  .createHash("sha256")
-  .update(`${username}${date}${password}`)
-  .digest("hex");
+    let data = "";
 
-//Converting to base64
-const authHeader = Buffer.from(`${username}:${password}`).toString("base64");
-const signatureMethodHeader = "SHA256";
-const bvn = "12345678901";
-const encrypted = encrypt(`{"BVN": "${bvn}"}`);
+    const request = http.request(options, (response) => {
+      response.on("error", error => {
+        throw error;
+      });
 
-//Verify BVN
-function BVN() {
-  const options = {
+      response.on('data', (chunk) => {
+        data += chunk;
+      });
 
-    //change hostname to match Interface URL on innovation sandbox dashboard
-    hostname: "",
-    path: "/nibss/bvnr/VerifySingleBVN",
-    port: 80,
-    headers: {
-      "Sandbox-Key": sandbox_key,
-      OrganisationCode: organisation_code,
-      Authorization: authHeader,
-      SIGNATURE: signatureHeader,
-      SIGNATURE_METH: signatureMethodHeader,
-      Accept: "application/json",
-      "Content-Type": "application/json"
-    },
-    method: "POST"
-  };
-
-  let data = "";
-
-  let decrypted;
-
-  const callback = function(res) {
-    res.on("data", chunck => {
-      data += chunck;
+      response.on("end", () => {
+        console.log("\nDECRYPTED RESPONSE");
+        console.log(JSON.parse(cr.decrypt(data)));
+      });
     });
 
-    //decrepting response
-    res.on("end", () => {
-      decrypted = decrypt(data);
-      console.log(decrypted);
-    });
+    console.log("\nSENDING ENCYRPTED REQUEST");
+    console.log(encrypted);
 
-    res.on("error", e => {
-      console.log("error", e);
-    });
-  };
-
-  const req = http
-    .request(options, callback)
-    .write(encrypted)
-    .end();
+    request.write(encrypted);
+    request.end();
+  } catch (error) {
+    throw error;
+  }
 }
 
 BVN();
