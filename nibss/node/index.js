@@ -78,8 +78,8 @@ async function BVN() {
     const payload = `{"BVN": "12345678901"}`;
     const encrypted = cr.encrypt(payload);
 
-    console.log("SENDING PAYLOAD")
-    console.log(payload)
+    console.log("SENDING PAYLOAD");
+    console.log(payload);
 
     const options = {
       hostname,
